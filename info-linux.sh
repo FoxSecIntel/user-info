@@ -1,119 +1,90 @@
 #!/bin/bash
 set -euo pipefail
 
-# Set strict error checking and exit on non-zero status codes
-
-# Display usage message
 usage() {
-  echo "Usage: $0 [OPTION]..."
-  echo "Generate a system report."
-  echo ""
-  echo "  -h, --help    display this help and exit"
-  echo "  -v, --verbose increase verbosity"
+  cat <<'EOF'
+Usage:
+  info-linux.sh [--deep] [--max-history N]
+
+Options:
+  --deep            Enable heavier checks (open files, SUID/SGID on /home)
+  --max-history N   Number of history lines to show (default: 10)
+  -h, --help        Show help
+EOF
 }
 
-# Parse command line options
+deep=false
+max_history=10
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    -h|--help)
-      usage
-      exit 0
-      ;;
-    -v|--verbose)
-      verbose=true
+    --deep) deep=true; shift ;;
+    --max-history)
+      shift
+      [[ $# -gt 0 ]] || { echo "Missing value for --max-history"; exit 1; }
+      max_history="$1"
       shift
       ;;
-    *)
-      usage
-      exit 1
-      ;;
+    -h|--help) usage; exit 0 ;;
+    *) echo "Unknown option: $1"; usage; exit 1 ;;
   esac
 done
 
-# Function to display logged-in users
-display_logged_in_users() {
-  who
+[[ "$max_history" =~ ^[0-9]+$ ]] || { echo "--max-history must be numeric"; exit 1; }
+
+section() {
+  echo
+  echo "################################################################################"
+  echo "$1"
 }
 
-# Function to display last logins
-display_last_logins() {
-  last -Faiwx -n 10
+safe_run() {
+  local cmd="$1"
+  bash -lc "$cmd" 2>/dev/null || echo "(unavailable)"
 }
 
-# Function to display accounts with a user ID of zero
-display_uid_zero_accounts() {
-  grep ':x:0:' /etc/passwd
-}
-
-# Function to display the last 5 lines of the current user's Bash history
-display_bash_history() {
-  tail -n 10 ~/.bash_history
-}
-
-# Function to display the files open by the current user
-display_open_files() {
-  lsof -u "$(whoami)"
-}
-
-# Function to display the most recent login of all users or of a given user
-display_lastlog() {
-  lastlog
-}
-
-# Print the results
-echo ""
-echo "################################################################################"
-echo "Reference:"
+section "Reference"
 date
 hostname
 whoami
 id
-echo ""
-echo "################################################################################"
-echo "Logged-in users:"
-display_logged_in_users
 
-echo ""
-echo "################################################################################"
-echo "Last logins:"
-display_last_logins
+section "Logged-in users"
+safe_run "who"
 
-echo ""
-echo "################################################################################"
-echo "Accounts with a user ID of zero:"
-display_uid_zero_accounts
+section "Last logins (10)"
+safe_run "last -Faiwx -n 10"
 
-echo ""
-echo "################################################################################"
-echo "/etc/passwd"
-sort -nk3 -t : /etc/passwd
+section "Accounts with UID 0"
+safe_run "awk -F: '\$3==0 {print}' /etc/passwd"
 
-echo ""
-echo "################################################################################"
-echo "Crontab:"
-crontab -l
+section "/etc/passwd (sorted by UID)"
+safe_run "sort -nk3 -t: /etc/passwd"
 
-echo ""
-echo "################################################################################"
-echo "Bash History:"
-display_bash_history
+section "Crontab (current user)"
+safe_run "crontab -l"
 
-echo ""
-echo "################################################################################"
-echo "File size > 10 meg:"
-find $HOME -size +10000k -print
+section "Bash history (last ${max_history})"
+if [[ -r "$HOME/.bash_history" ]]; then
+  tail -n "$max_history" "$HOME/.bash_history"
+else
+  echo "(no readable ~/.bash_history)"
+fi
 
-echo ""
-echo "################################################################################"
-echo "Find File with SUID Set:"
-find $HOME -perm /4000
+section "Large files in HOME (>10MB)"
+safe_run "find '$HOME' -type f -size +10M -print | head -n 200"
 
-echo ""
-echo "################################################################################"
-echo "Find File with SGID Set:"
-find $HOME -perm /2000
+if $deep; then
+  section "Open files for current user (deep)"
+  if command -v lsof >/dev/null 2>&1; then
+    safe_run "lsof -u \"$(whoami)\" | head -n 300"
+  else
+    echo "lsof not installed"
+  fi
 
-echo ""
-echo "################################################################################"
-echo "Find File with SUID & SGID Set:"
-find $HOME -perm -6000
+  section "SUID files under /home (deep)"
+  safe_run "find /home -xdev -type f -perm -4000 -print"
+
+  section "SGID files under /home (deep)"
+  safe_run "find /home -xdev -type f -perm -2000 -print"
+fi

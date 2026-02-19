@@ -1,42 +1,49 @@
-# Get the list of all users on the system
-$users = Get-LocalUser
-Write-Output $users
+param(
+    [int]$MaxEvents = 10
+)
 
-# Loop over the users and display their details
+Write-Output "==== Reference ===="
+Get-Date
+$env:COMPUTERNAME
+$env:USERNAME
+
+Write-Output "`n==== Local Users ===="
+$users = Get-LocalUser | Sort-Object Name
+$users | Select-Object Name, Enabled, LastLogon, PasswordLastSet, PasswordNeverExpires
+
+Write-Output "`n==== High Privilege Membership (Administrators) ===="
+$adminMembers = @()
+try {
+    $adminMembers = Get-LocalGroupMember -Group "Administrators" | Select-Object -ExpandProperty Name
+    if ($adminMembers.Count -eq 0) { Write-Output "(none)" } else { $adminMembers }
+} catch {
+    Write-Output "(unable to read Administrators group members)"
+}
+
+Write-Output "`n==== User Summary ===="
 foreach ($user in $users) {
-  # Display the username
-  Write-Output "Username: $($user.Name)"
-
-  # Check if the user is currently logged in
-  $loggedIn = $false
-  $sessions = quser
-  foreach ($session in $sessions) {
-    if ($session -match $user.Name) {
-      $loggedIn = $true
-      break
+    $isAdmin = $false
+    foreach ($m in $adminMembers) {
+        if ($m -match "\\$($user.Name)$" -or $m -eq $user.Name) { $isAdmin = $true; break }
     }
-  }
-  Write-Output "Logged in: $loggedIn"
 
-  # Check if the user is a high privileged account
-  $highPrivileged = $false
-  $membership = $user.Group | Select-Object -ExpandProperty Name
-  foreach ($group in $membership) {
-    if ($group -match "administrators|domain admins|enterprise admins") {
-      $highPrivileged = $true
-      break
+    Write-Output "User: $($user.Name)"
+    Write-Output "  Enabled: $($user.Enabled)"
+    Write-Output "  LastLogon: $($user.LastLogon)"
+    Write-Output "  PasswordLastSet: $($user.PasswordLastSet)"
+    Write-Output "  PasswordNeverExpires: $($user.PasswordNeverExpires)"
+    Write-Output "  HighPriv(Administrators): $isAdmin"
+}
+
+Write-Output "`n==== Recent Successful Logons (Event ID 4624) ===="
+try {
+    $events = Get-WinEvent -FilterHashtable @{ LogName='Security'; Id=4624 } -MaxEvents $MaxEvents -ErrorAction Stop
+    foreach ($e in $events) {
+        $xml = [xml]$e.ToXml()
+        $targetUser = ($xml.Event.EventData.Data | Where-Object { $_.Name -eq 'TargetUserName' } | Select-Object -First 1).'#text'
+        $logonType = ($xml.Event.EventData.Data | Where-Object { $_.Name -eq 'LogonType' } | Select-Object -First 1).'#text'
+        "{0} | User={1} | LogonType={2}" -f $e.TimeCreated, $targetUser, $logonType
     }
-  }
-  Write-Output "High privileged: $highPrivileged"
-
-  # Display the user history
-  Write-Output "History:"
-  $history = (Get-EventLog Security -UserName $user.Name -InstanceId 4624 -Newest 10) | Format-List
-  Write-Output $history
-
-  # Display other useful details about the user
-  Write-Output "Other details:"
-  $details = $user | Select-Object PasswordLastSet, LastLogon, Description, PasswordNeverExpires, PasswordChangeable, PasswordExpires
-  Write-Output $details
-  Write-Output ""
+} catch {
+    Write-Output "(unable to read Security event log; run elevated)"
 }
