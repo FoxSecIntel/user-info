@@ -40,7 +40,7 @@ section() {
 
 safe_run() {
   local cmd="$1"
-  bash -lc "$cmd" 2>/dev/null || echo "(unavailable)"
+  bash -c "$cmd" 2>/dev/null || echo "(unavailable)"
 }
 
 section "Reference"
