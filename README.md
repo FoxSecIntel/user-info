@@ -79,3 +79,12 @@ Set-ExecutionPolicy -Scope Process Bypass
 ## Legal
 
 Use only on systems you own or are explicitly authorized to assess.
+
+## Quick Demo
+
+```bash
+# 1) Run a core check
+# 2) Request JSON output
+# 3) Pipe into jq for analyst workflows
+```
+
